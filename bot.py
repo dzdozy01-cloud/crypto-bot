@@ -219,7 +219,18 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Unknown command. Use /help to see available commands.")
 
 def main():
+    # Works both locally (.env) and on Railway (environment variable)
     TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not TOKEN:
+        # Try reading directly from .env file
+        try:
+            with open(".env") as f:
+                for line in f:
+                    if line.startswith("TELEGRAM_BOT_TOKEN"):
+                        TOKEN = line.strip().split("=", 1)[1]
+                        break
+        except FileNotFoundError:
+            pass
     if not TOKEN:
         print("Error: TELEGRAM_BOT_TOKEN not set")
         return
