@@ -1,334 +1,247 @@
-import asyncio
+import os
 import logging
+from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
-from config import TELEGRAM_TOKEN, CHECK_INTERVAL
-from database import (
-    init_db, add_alert, get_alerts, mark_alert_triggered,
-    delete_alert, add_to_watchlist, get_watchlist, remove_from_watchlist
-)
-from price_tracker import (
-    get_price, get_multiple_prices, search_coin,
-    get_trending, get_market_overview
-)
+from crypto import get_price, get_multiple_prices, format_price, COIN_IDS
+
+load_dotenv()
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-def format_price(price):
-    if price >= 1:
-        return f"${price:,.2f}"
-    elif price >= 0.01:
-        return f"${price:.4f}"
-    else:
-        return f"${price:.8f}"
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-def format_change(change):
-    emoji = "up" if change >= 0 else "down"
-    return f"{emoji} {change:+.2f}%"
+user_watchlists = {}
 
-def format_large_number(num):
-    if num >= 1_000_000_000:
-        return f"${num / 1_000_000_000:.2f}B"
-    elif num >= 1_000_000:
-        return f"${num / 1_000_000:.2f}M"
-    else:
-        return f"${num:,.0f}"
-
-async def start(update, context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [
-            InlineKeyboardButton("Top Coins", callback_data="market"),
-            InlineKeyboardButton("Trending", callback_data="trending"),
+            InlineKeyboardButton("BTC Price", callback_data="price_btc"),
+            InlineKeyboardButton("ETH Price", callback_data="price_eth"),
         ],
         [
-            InlineKeyboardButton("Watchlist", callback_data="watchlist"),
-            InlineKeyboardButton("My Alerts", callback_data="my_alerts"),
+            InlineKeyboardButton("Market Overview", callback_data="market"),
+            InlineKeyboardButton("My Watchlist", callback_data="watchlist"),
         ],
-        [InlineKeyboardButton("Help", callback_data="help")]
     ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
         "Welcome to CryptoTracker Bot!\n\n"
         "Commands:\n"
-        "/price bitcoin - Get price\n"
-        "/alert bitcoin above 50000 - Set alert\n"
-        "/watch ethereum - Add to watchlist\n"
-        "/market - Top 10 coins\n"
-        "/trending - Trending coins\n",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        "/price btc - Get BTC price\n"
+        "/market - Market overview\n"
+        "/watch btc eth - Add to watchlist\n"
+        "/watchlist - View watchlist\n"
+        "/help - All commands",
+        reply_markup=reply_markup,
     )
 
-async def price_command(update, context):
-    if not context.args:
-        await update.message.reply_text("Usage: /price bitcoin")
-        return
-    coin_id = context.args[0].lower()
-    msg = await update.message.reply_text(f"Fetching {coin_id}...")
-    data = get_price(coin_id)
-    if not data:
-        await msg.edit_text(f"Coin {coin_id} not found.")
-        return
-    price = data.get("usd", 0)
-    change_24h = data.get("usd_24h_change", 0) or 0
-    market_cap = data.get("usd_market_cap", 0)
-    keyboard = [[
-        InlineKeyboardButton("Set Alert", callback_data=f"setalert_{coin_id}"),
-        InlineKeyboardButton("Watch", callback_data=f"addwatch_{coin_id}"),
-    ],[InlineKeyboardButton("Refresh", callback_data=f"refresh_{coin_id}")]]
-    await msg.edit_text(
-        f"{coin_id.upper()}\n\n"
-        f"Price: {format_price(price)}\n"
-        f"24h: {format_change(change_24h)}\n"
-        f"Market Cap: {format_large_number(market_cap)}\n",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-async def market_command(update, context):
-    msg = await update.message.reply_text("Fetching market...")
-    coins = get_market_overview(limit=10)
-    if not coins:
-        await msg.edit_text("Could not fetch market data.")
-        return
-    text = "Top 10 Cryptocurrencies\n\n"
-    for i, coin in enumerate(coins, 1):
-        change = coin.get("price_change_percentage_24h", 0) or 0
-        arrow = "up" if change >= 0 else "down"
-        text += f"{i}. {coin['name']} - {format_price(coin['current_price'])} {arrow} {change:+.2f}%\n"
-    await msg.edit_text(text)
-
-async def trending_command(update, context):
-    msg = await update.message.reply_text("Fetching trending...")
-    trending = get_trending()
-    if not trending:
-        await msg.edit_text("Could not fetch trending.")
-        return
-    text = "Trending Coins\n\n"
-    for i, item in enumerate(trending[:7], 1):
-        coin = item.get("item", {})
-        text += f"{i}. {coin.get('name')} ({coin.get('symbol','').upper()})\n"
-    await msg.edit_text(text)
-
-async def alert_command(update, context):
-    if len(context.args) < 3:
-        await update.message.reply_text("Usage: /alert bitcoin above 50000")
-        return
-    coin_id = context.args[0].lower()
-    condition = context.args[1].lower()
-    if condition not in ["above", "below"]:
-        await update.message.reply_text("Use above or below")
-        return
-    try:
-        target_price = float(context.args[2].replace(",", ""))
-    except ValueError:
-        await update.message.reply_text("Invalid price.")
-        return
-    data = get_price(coin_id)
-    if not data:
-        await update.message.reply_text(f"Coin {coin_id} not found.")
-        return
-    add_alert(update.effective_chat.id, coin_id, target_price, condition)
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"Alert Set!\n"
-        f"{coin_id.upper()} {condition} {format_price(target_price)}"
+        "Available Commands:\n\n"
+        "/price btc - Get coin price\n"
+        "/market - Market overview\n"
+        "/watch btc eth - Add to watchlist\n"
+        "/watchlist - View watchlist\n"
+        "/unwatch btc - Remove from watchlist\n"
     )
 
-async def alerts_command(update, context):
-    alerts = get_alerts(update.effective_chat.id)
-    if not alerts:
-        await update.message.reply_text("No active alerts.")
-        return
-    text = "Your Alerts:\n\n"
-    keyboard = []
-    for alert in alerts:
-        alert_id, _, coin, price, condition, _, _ = alert
-        text += f"#{alert_id} {coin.upper()} {condition} {format_price(price)}\n"
-        keyboard.append([InlineKeyboardButton(
-            f"Delete #{alert_id}",
-            callback_data=f"delalert_{alert_id}"
-        )])
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def watch_command(update, context):
+async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Usage: /watch bitcoin")
+        await update.message.reply_text("Please specify a coin. Example: /price btc")
         return
-    coin_id = context.args[0].lower()
-    data = get_price(coin_id)
+    symbol = context.args[0].lower()
+    msg = await update.message.reply_text(f"Fetching {symbol.upper()} price...")
+    data = get_price(symbol)
     if not data:
-        await update.message.reply_text("Coin not found.")
+        await msg.edit_text(f"Could not find price for {symbol.upper()}")
         return
-    if add_to_watchlist(update.effective_chat.id, coin_id):
-        await update.message.reply_text(f"{coin_id.upper()} added to watchlist!")
+    keyboard = [
+        [
+            InlineKeyboardButton("Refresh", callback_data=f"price_{symbol}"),
+            InlineKeyboardButton("Add to Watchlist", callback_data=f"watch_{symbol}"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await msg.edit_text(
+        format_price(data),
+        reply_markup=reply_markup,
+    )
+
+async def market_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = await update.message.reply_text("Fetching market data...")
+    top_coins = ["btc", "eth", "bnb", "sol", "xrp", "ada", "doge"]
+    results = get_multiple_prices(top_coins)
+    if not results:
+        await msg.edit_text("Failed to fetch market data. Try again.")
+        return
+    text = "Market Overview\n\n"
+    for coin in results:
+        change = coin["change_24h"]
+        arrow = "UP" if change >= 0 else "DOWN"
+        price = coin["price"]
+        price_str = f"${price:,.2f}" if price >= 1 else f"${price:.6f}"
+        text += f"{coin['symbol']}: {price_str} ({arrow} {abs(change):.2f}%)\n"
+    keyboard = [[InlineKeyboardButton("Refresh", callback_data="market")]]
+    await msg.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not context.args:
+        await update.message.reply_text("Example: /watch btc eth sol")
+        return
+    if user_id not in user_watchlists:
+        user_watchlists[user_id] = []
+    added = []
+    for symbol in context.args:
+        s = symbol.upper()
+        if s not in user_watchlists[user_id]:
+            user_watchlists[user_id].append(s)
+            added.append(s)
+    if added:
+        await update.message.reply_text(f"Added to watchlist: {', '.join(added)}")
     else:
-        await update.message.reply_text("Already in watchlist!")
+        await update.message.reply_text("Those coins are already in your watchlist.")
 
-async def watchlist_command(update, context):
-    coins = get_watchlist(update.effective_chat.id)
-    if not coins:
-        await update.message.reply_text("Watchlist empty. Use /watch bitcoin")
+async def watchlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in user_watchlists or not user_watchlists[user_id]:
+        await update.message.reply_text(
+            "Your watchlist is empty.\nUse /watch btc eth to add coins."
+        )
         return
-    msg = await update.message.reply_text("Fetching watchlist...")
-    prices = get_multiple_prices(coins)
+    msg = await update.message.reply_text("Loading your watchlist...")
+    symbols = [s.lower() for s in user_watchlists[user_id]]
+    results = get_multiple_prices(symbols)
     text = "Your Watchlist\n\n"
-    for coin in coins:
-        data = prices.get(coin, {})
-        if data:
-            price = data.get("usd", 0)
-            change = data.get("usd_24h_change", 0) or 0
-            text += f"{coin.upper()}: {format_price(price)} {format_change(change)}\n"
-    await msg.edit_text(text)
+    for coin in results:
+        change = coin["change_24h"]
+        arrow = "UP" if change >= 0 else "DOWN"
+        price = coin["price"]
+        price_str = f"${price:,.2f}" if price >= 1 else f"${price:.6f}"
+        text += f"{coin['symbol']}: {price_str} ({arrow} {abs(change):.2f}%)\n"
+    keyboard = [
+        [
+            InlineKeyboardButton("Refresh", callback_data="watchlist"),
+            InlineKeyboardButton("Clear All", callback_data="clear_watchlist"),
+        ]
+    ]
+    await msg.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def button_callback(update, context):
+async def unwatch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not context.args:
+        await update.message.reply_text("Example: /unwatch btc")
+        return
+    symbol = context.args[0].upper()
+    if user_id in user_watchlists and symbol in user_watchlists[user_id]:
+        user_watchlists[user_id].remove(symbol)
+        await update.message.reply_text(f"Removed {symbol} from watchlist.")
+    else:
+        await update.message.reply_text(f"{symbol} is not in your watchlist.")
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    user_id = query.from_user.id
 
-    if data == "market":
-        coins = get_market_overview(limit=10)
-        text = "Top 10 Cryptocurrencies\n\n"
-        for i, coin in enumerate(coins, 1):
-            change = coin.get("price_change_percentage_24h", 0) or 0
-            arrow = "up" if change >= 0 else "down"
-            text += f"{i}. {coin['name']} - {format_price(coin['current_price'])} {arrow} {change:+.2f}%\n"
-        await query.edit_message_text(text)
+    if data.startswith("price_"):
+        symbol = data.split("_")[1]
+        coin_data = get_price(symbol)
+        if coin_data:
+            keyboard = [
+                [
+                    InlineKeyboardButton("Refresh", callback_data=f"price_{symbol}"),
+                    InlineKeyboardButton("Add to Watchlist", callback_data=f"watch_{symbol}"),
+                ]
+            ]
+            await query.edit_message_text(
+                format_price(coin_data),
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+        else:
+            await query.edit_message_text(f"Failed to fetch {symbol.upper()} price.")
 
-    elif data == "trending":
-        trending = get_trending()
-        text = "Trending Coins\n\n"
-        for i, item in enumerate(trending[:7], 1):
-            coin = item.get("item", {})
-            text += f"{i}. {coin.get('name')} ({coin.get('symbol','').upper()})\n"
-        await query.edit_message_text(text)
+    elif data.startswith("watch_"):
+        symbol = data.split("_")[1].upper()
+        if user_id not in user_watchlists:
+            user_watchlists[user_id] = []
+        if symbol not in user_watchlists[user_id]:
+            user_watchlists[user_id].append(symbol)
+            await query.answer(f"{symbol} added to watchlist!", show_alert=True)
+        else:
+            await query.answer(f"{symbol} already in watchlist.", show_alert=True)
+
+    elif data == "market":
+        top_coins = ["btc", "eth", "bnb", "sol", "xrp", "ada", "doge"]
+        results = get_multiple_prices(top_coins)
+        text = "Market Overview\n\n"
+        for coin in results:
+            change = coin["change_24h"]
+            arrow = "UP" if change >= 0 else "DOWN"
+            price = coin["price"]
+            price_str = f"${price:,.2f}" if price >= 1 else f"${price:.6f}"
+            text += f"{coin['symbol']}: {price_str} ({arrow} {abs(change):.2f}%)\n"
+        keyboard = [[InlineKeyboardButton("Refresh", callback_data="market")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "watchlist":
-        coins = get_watchlist(query.message.chat_id)
-        if not coins:
-            await query.edit_message_text("Watchlist empty.")
+        if user_id not in user_watchlists or not user_watchlists[user_id]:
+            await query.answer("Your watchlist is empty!", show_alert=True)
             return
-        prices = get_multiple_prices(coins)
+        symbols = [s.lower() for s in user_watchlists[user_id]]
+        results = get_multiple_prices(symbols)
         text = "Your Watchlist\n\n"
-        for coin in coins:
-            d = prices.get(coin, {})
-            if d:
-                price = d.get("usd", 0)
-                change = d.get("usd_24h_change", 0) or 0
-                text += f"{coin.upper()}: {format_price(price)} {format_change(change)}\n"
-        await query.edit_message_text(text)
+        for coin in results:
+            change = coin["change_24h"]
+            arrow = "UP" if change >= 0 else "DOWN"
+            price = coin["price"]
+            price_str = f"${price:,.2f}" if price >= 1 else f"${price:.6f}"
+            text += f"{coin['symbol']}: {price_str} ({arrow} {abs(change):.2f}%)\n"
+        keyboard = [
+            [
+                InlineKeyboardButton("Refresh", callback_data="watchlist"),
+                InlineKeyboardButton("Clear All", callback_data="clear_watchlist"),
+            ]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif data == "my_alerts":
-        alerts = get_alerts(query.message.chat_id)
-        if not alerts:
-            await query.edit_message_text("No active alerts.")
-            return
-        text = "Your Alerts:\n\n"
-        for alert in alerts:
-            alert_id, _, coin, price, condition, _, _ = alert
-            text += f"#{alert_id} {coin.upper()} {condition} {format_price(price)}\n"
-        await query.edit_message_text(text)
+    elif data == "clear_watchlist":
+        user_watchlists[user_id] = []
+        await query.edit_message_text("Watchlist cleared!")
 
-    elif data == "help":
-        await query.edit_message_text(
-            "Commands:\n\n"
-            "/price bitcoin\n"
-            "/market\n"
-            "/trending\n"
-            "/alert bitcoin above 50000\n"
-            "/alerts\n"
-            "/watch bitcoin\n"
-            "/watchlist\n"
-        )
-
-    elif data.startswith("refresh_"):
-        coin_id = data.split("_", 1)[1]
-        price_data = get_price(coin_id)
-        if price_data:
-            price = price_data.get("usd", 0)
-            change_24h = price_data.get("usd_24h_change", 0) or 0
-            market_cap = price_data.get("usd_market_cap", 0)
-            keyboard = [[
-                InlineKeyboardButton("Alert", callback_data=f"setalert_{coin_id}"),
-                InlineKeyboardButton("Watch", callback_data=f"addwatch_{coin_id}"),
-            ],[InlineKeyboardButton("Refresh", callback_data=f"refresh_{coin_id}")]]
-            await query.edit_message_text(
-                f"{coin_id.upper()}\n\n"
-                f"Price: {format_price(price)}\n"
-                f"24h: {format_change(change_24h)}\n"
-                f"Market Cap: {format_large_number(market_cap)}\n",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-
-    elif data.startswith("addwatch_"):
-        coin_id = data.split("_", 1)[1]
-        if add_to_watchlist(query.message.chat_id, coin_id):
-            await query.answer(f"{coin_id.upper()} added!", show_alert=True)
-        else:
-            await query.answer("Already in watchlist!", show_alert=True)
-
-    elif data.startswith("delalert_"):
-        alert_id = int(data.split("_", 1)[1])
-        delete_alert(alert_id, query.message.chat_id)
-        await query.answer("Alert deleted!", show_alert=True)
-        await query.edit_message_text(f"Alert #{alert_id} deleted.")
-
-async def check_alerts(application):
-    alerts = get_alerts()
-    if not alerts:
-        return
-    coin_ids = list(set(alert[2] for alert in alerts))
-    prices = get_multiple_prices(coin_ids)
-    for alert in alerts:
-        alert_id, chat_id, coin_id, target_price, condition, _, _ = alert
-        coin_data = prices.get(coin_id, {})
-        if not coin_data:
-            continue
-        current_price = coin_data.get("usd", 0)
-        triggered = False
-        if condition == "above" and current_price >= target_price:
-            triggered = True
-        elif condition == "below" and current_price <= target_price:
-            triggered = True
-        if triggered:
-            mark_alert_triggered(alert_id)
-            try:
-                await application.bot.send_message(
-                    chat_id=chat_id,
-                    text=(
-                        f"Alert Triggered!\n\n"
-                        f"{coin_id.upper()} is {condition} {format_price(target_price)}\n"
-                        f"Current: {format_price(current_price)}"
-                    )
-                )
-            except Exception as e:
-                logger.error(f"Failed to send alert: {e}")
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Unknown command. Use /help to see available commands.")
 
 def main():
-    init_db()
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("price", price_command))
-    application.add_handler(CommandHandler("market", market_command))
-    application.add_handler(CommandHandler("trending", trending_command))
-    application.add_handler(CommandHandler("alert", alert_command))
-    application.add_handler(CommandHandler("alerts", alerts_command))
-    application.add_handler(CommandHandler("watch", watch_command))
-    application.add_handler(CommandHandler("watchlist", watchlist_command))
-    application.add_handler(CallbackQueryHandler(button_callback))
-    job_queue = application.job_queue
-    job_queue.run_repeating(
-        lambda ctx: asyncio.create_task(check_alerts(application)),
-        interval=CHECK_INTERVAL,
-        first=10
-    )
-    logger.info("Bot started!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    if not TOKEN:
+        print("Error: TELEGRAM_BOT_TOKEN not set")
+        return
+    print("Starting CryptoTracker Bot...")
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("price", price_command))
+    app.add_handler(CommandHandler("market", market_command))
+    app.add_handler(CommandHandler("watch", watch_command))
+    app.add_handler(CommandHandler("watchlist", watchlist_command))
+    app.add_handler(CommandHandler("unwatch", unwatch_command))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+    print("Bot is running!")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
