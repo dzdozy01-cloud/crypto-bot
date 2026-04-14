@@ -1,6 +1,5 @@
 import os
 import logging
-from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -10,17 +9,12 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from crypto import get_price, get_multiple_prices, format_price, COIN_IDS
-
-load_dotenv()
+from crypto import get_price, get_multiple_prices, format_price
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
-logger = logging.getLogger(__name__)
-
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 user_watchlists = {}
 
@@ -73,10 +67,9 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("Add to Watchlist", callback_data=f"watch_{symbol}"),
         ]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
     await msg.edit_text(
         format_price(data),
-        reply_markup=reply_markup,
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 async def market_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -226,6 +219,7 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Unknown command. Use /help to see available commands.")
 
 def main():
+    TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not TOKEN:
         print("Error: TELEGRAM_BOT_TOKEN not set")
         return
