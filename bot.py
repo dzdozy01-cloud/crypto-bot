@@ -8,9 +8,6 @@ logging.basicConfig(level=logging.INFO)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Bot is working!")
 
-async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Price command works!")
-
 def main():
     TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not TOKEN:
@@ -28,7 +25,6 @@ def main():
     print("Starting Bot...")
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("price", price))
     print("Bot is running!")
     app.run_polling()
 
