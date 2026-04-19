@@ -1,11 +1,22 @@
 import requests
+import os
+import time
 
 BASE_URL = "https://api.coingecko.com/api/v3"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "application/json",
-}
+API_KEY = os.environ.get("COINGECKO_API_KEY")
+
+def get_headers():
+    if API_KEY:
+        return {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
+            "x-cg-demo-api-key": API_KEY,
+        }
+    return {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+    }
 
 COIN_IDS = {
     "btc": "bitcoin",
@@ -27,7 +38,6 @@ COIN_IDS = {
     "atom": "cosmos",
     "xlm": "stellar",
     "etc": "ethereum-classic",
-    "fil": "filecoin",
     "apt": "aptos",
     "near": "near",
     "algo": "algorand",
@@ -35,31 +45,24 @@ COIN_IDS = {
     "mana": "decentraland",
     "sand": "the-sandbox",
     "axs": "axie-infinity",
-    "theta": "theta-token",
     "hbar": "hedera-hashgraph",
-    "ftm": "fantom",
     "trx": "tron",
     "mkr": "maker",
     "aave": "aave",
     "cake": "pancakeswap-token",
-    "zec": "zcash",
     "xmr": "monero",
     "bch": "bitcoin-cash",
     "eos": "eos",
-    "neo": "neo",
-    "dash": "dash",
     "bat": "basic-attention-token",
     "chz": "chiliz",
     "grt": "the-graph",
     "comp": "compound-governance-token",
     "sushi": "sushi",
-    "yfi": "yearn-finance",
     "zil": "zilliqa",
     "xtz": "tezos",
     "flow": "flow",
     "ar": "arweave",
     "rose": "oasis-network",
-    "one": "harmony",
     "celo": "celo",
     "lrc": "loopring",
     "ankr": "ankr",
@@ -83,7 +86,7 @@ def get_price(coin_symbol):
     try:
         response = requests.get(
             f"{BASE_URL}/simple/price",
-            headers=HEADERS,
+            headers=get_headers(),
             params={
                 "ids": coin_id,
                 "vs_currencies": "usd",
@@ -120,7 +123,7 @@ def get_multiple_prices(symbols):
     try:
         response = requests.get(
             f"{BASE_URL}/simple/price",
-            headers=HEADERS,
+            headers=get_headers(),
             params={
                 "ids": ",".join(coin_ids),
                 "vs_currencies": "usd",
