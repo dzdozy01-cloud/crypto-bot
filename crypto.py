@@ -2,6 +2,11 @@ import requests
 
 BASE_URL = "https://api.coingecko.com/api/v3"
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json",
+}
+
 COIN_IDS = {
     "btc": "bitcoin",
     "eth": "ethereum",
@@ -26,64 +31,38 @@ COIN_IDS = {
     "apt": "aptos",
     "near": "near",
     "algo": "algorand",
-    "icp": "internet-computer",
     "vet": "vechain",
     "mana": "decentraland",
     "sand": "the-sandbox",
     "axs": "axie-infinity",
     "theta": "theta-token",
-    "egld": "elrond-erd-2",
     "hbar": "hedera-hashgraph",
     "ftm": "fantom",
     "trx": "tron",
-    "leo": "leo-token",
-    "okb": "okb",
-    "stx": "blockstack",
     "mkr": "maker",
     "aave": "aave",
-    "crv": "curve-dao-token",
-    "snx": "havven",
     "cake": "pancakeswap-token",
-    "kcs": "kucoin-shares",
     "zec": "zcash",
     "xmr": "monero",
     "bch": "bitcoin-cash",
     "eos": "eos",
     "neo": "neo",
-    "waves": "waves",
     "dash": "dash",
     "bat": "basic-attention-token",
     "chz": "chiliz",
-    "enj": "enjincoin",
     "grt": "the-graph",
-    "1inch": "1inch",
     "comp": "compound-governance-token",
     "sushi": "sushi",
     "yfi": "yearn-finance",
-    "uma": "uma",
     "zil": "zilliqa",
-    "icx": "icon",
-    "ont": "ontology",
-    "btt": "bittorrent",
-    "hot": "holotoken",
-    "sc": "siacoin",
-    "dcr": "decred",
-    "rvn": "ravencoin",
     "xtz": "tezos",
     "flow": "flow",
     "ar": "arweave",
-    "klay": "klay-token",
     "rose": "oasis-network",
     "one": "harmony",
     "celo": "celo",
-    "knc": "kyber-network-crystal",
     "lrc": "loopring",
-    "storj": "storj",
     "ankr": "ankr",
-    "skl": "skale",
-    "ogn": "origin-protocol",
-    "api3": "api3",
-    "perp": "perpetual-protocol",
     "op": "optimism",
     "arb": "arbitrum",
     "sui": "sui",
@@ -94,11 +73,8 @@ COIN_IDS = {
     "inj": "injective-protocol",
     "sei": "sei-network",
     "tia": "celestia",
-    "pyth": "pyth-network",
-    "jup": "jupiter-exchange-solana",
-    "wen": "wen-4",
     "ray": "raydium",
-    "jto": "jito-governance-token",
+    "jup": "jupiter-exchange-solana",
 }
 
 def get_price(coin_symbol):
@@ -107,6 +83,7 @@ def get_price(coin_symbol):
     try:
         response = requests.get(
             f"{BASE_URL}/simple/price",
+            headers=HEADERS,
             params={
                 "ids": coin_id,
                 "vs_currencies": "usd",
@@ -114,7 +91,7 @@ def get_price(coin_symbol):
                 "include_24hr_vol": "true",
                 "include_market_cap": "true",
             },
-            timeout=10,
+            timeout=15,
         )
         response.raise_for_status()
         data = response.json()
@@ -143,12 +120,13 @@ def get_multiple_prices(symbols):
     try:
         response = requests.get(
             f"{BASE_URL}/simple/price",
+            headers=HEADERS,
             params={
                 "ids": ",".join(coin_ids),
                 "vs_currencies": "usd",
                 "include_24hr_change": "true",
             },
-            timeout=10,
+            timeout=15,
         )
         response.raise_for_status()
         data = response.json()
