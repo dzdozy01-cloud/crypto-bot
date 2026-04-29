@@ -1,3 +1,24 @@
+from flask import Flask
+from threading import Thread
+import os
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run():
+    # Render provides a PORT environment variable automatically
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# Call this right before your bot starts polling
+keep_alive()
 import os
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
